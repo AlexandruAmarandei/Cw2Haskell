@@ -369,18 +369,29 @@ toString x = "x" ++ show x
 
 
 myPrint :: Expr -> Int -> Int -> String 
+
+myPrint (App (App expr0 expr1) (App expr2 expr3)) last hasNext
+    | last == 0 || hasNext == 0 = myPrint (App expr0 expr1) 0 1 ++"("++ myPrint (App expr2 expr3) 0 hasNext ++ ")"
+    | otherwise = "(" ++ myPrint(App expr0 expr1) 0 1 ++ "(" ++ myPrint (App expr2 expr3) 0 hasNext++ ")" ++ ")"
+
 myPrint (App (App expr0 expr1) expr2) last hasNext
     | last == 0 || hasNext == 0 =  myPrint (App expr0 expr1) 0 1 ++ myPrint expr2 0 hasNext
     | otherwise = "(" ++ myPrint (App expr0 expr1) 0 1 ++ myPrint expr2 0 hasNext ++ ")"
+    
+myPrint (App expr0 (App expr1 expr2)) last hasNext  
+    | last == 0 || hasNext == 0 = myPrint expr0 0 1 ++ "(" ++ myPrint (App expr1 expr2) 0 hasNext ++ ")"
+    | otherwise = "(" ++ myPrint expr0 0 1++ "(" ++ myPrint (App expr1 expr2) 0 hasNext ++ "))"
+    
 myPrint (App expr1 expr2) last hasNext
     | last == 0 || hasNext == 0 = myPrint expr1 0 1 ++ myPrint expr2 0 hasNext
     | otherwise = "(" ++ myPrint expr1 0 1 ++ myPrint expr2 0 hasNext ++ ")"
 myPrint (Lam int (Lam int2 expr2)) last hasNext
-    | hasNext == 0 = toString int ++ myPrint (Lam int2 expr2) 1 hasNext
+    | last == 1 = toString int ++ myPrint (Lam int2 expr2) 1 hasNext
+    | hasNext == 0 = "\\" ++ toString int ++ myPrint (Lam int2 expr2) 1 hasNext
     | otherwise =  "(\\" ++ toString int ++ myPrint (Lam int2 expr2) 1 hasNext ++ ")"
 myPrint (Lam int expr) last hasNext
     | last == 1 = toString int ++ "->" ++ myPrint expr 1 hasNext
-    | hasNext == 0 = toString int ++ "->" ++ myPrint expr 1 hasNext
+    | hasNext == 0 = "\\" ++toString int ++ "->" ++ myPrint expr 1 hasNext
     | otherwise = "(\\" ++ toString int ++ "->" ++ myPrint expr 1 hasNext ++ ")"
 myPrint (Var int) last hasNext = toString int  
    
@@ -394,7 +405,7 @@ prettyPrint expr = myPrint (normalizeVariables expr 1 []) (-1) 0
 
 -- Basic definitions
 
-
+--Parser Taken from Programming in Haskell by Graham Hutton \|/
     
 newtype Parser a = P (String -> [(a,String)])
 
@@ -509,35 +520,74 @@ integer = token int
 symbol :: String -> Parser String
 symbol xs = token (string xs)
 
+--End of Parser Taken from Programming in Haskell by Graham Hutton /|\
 
- -- ExprPars ::= VarPars | ExprPars ExprPars | “\” VarsPars “->” ExprPars | ( ExprPars )
- -- VarsPars ::= VarPars | VarPars VarsPars
- -- VarPars  ::= "x" DigitsPars
- -- DigitsPars ::= DigitPars | DigitsPars DigitPars
- -- DigitPars ::= '0' | '1' | … | '9'
- 
 data ExtExpr =
     ExtApp ExtExpr ExtExpr
     | ExtLam [Int] ExtExpr
     | ExtVar Int
     deriving (Show, Eq)
 
-    
 
+exprParsApp :: [ExtExpr] ->  ExtExpr 
+exprParsApp exprList 
+     | lenList == 1 = (head exprList)
+     | lenList == 2 = (ExtApp (head exprList) (lastElem exprList))
+     | lenList == 3 = (ExtApp (exprParsApp (headTail exprList)) (lastElem exprList))
+    where lenList = listLength exprList
     
+    
+exprParseTerm :: Parser ExtExpr
+exprParseTerm =  do result <- many exprPars
+                    let newResult = exprParsApp result
+                    return (newResult)
+
+exprParants :: Parser ExtExpr
+exprParants = do symbol "("
+                 result <-  exprParseTerm  
+
+                 symbol ")"
+                 return ( result) 
+                
+   
 exprPars :: Parser ExtExpr   
-exprPars = exprParsLam <|> exprParsVar
+exprPars = exprParants <|> exprParsLam <|> exprParsVar
 
+
+
+exprParseApp :: Parser ExtExpr
+exprParseApp = do resultExpr1 <- exprPars
+                  resultExpr2 <- exprPars
+                  return (ExtApp resultExpr1 resultExpr2)
+
+headTail:: (Eq a)=>[a] -> [a]
+headTail (x:xs)
+    | xs == []   = []
+    | otherwise = [x] ++ headTail xs
+    
+lastElem :: (Eq a) => [a] -> a
+lastElem (x:xs) 
+    | xs == [] = x
+    | otherwise = lastElem xs
+                  
+parseTransformVariables :: [Int] -> ExtExpr
+parseTransformVariables list
+    | listLength list == 0 = (ExtVar (-1))
+    | listLength list == 1 = (ExtVar (head list))
+    | listLength list == 2 = (ExtApp (ExtVar (head list)) (ExtVar (head (tail list))))
+    | otherwise = (ExtApp (parseTransformVariables (headTail list)) (ExtVar (lastElem list)))
+    
+                  
 exprParsVar :: Parser ExtExpr
 exprParsVar = do resultVars <- varsPars
-                 return (ExtVar resultVars)
+                 return (parseTransformVariables resultVars)
  
 exprParsLam :: Parser ExtExpr    
-exprParsLam = do  symbol "#"
+exprParsLam = do  symbol "\\"
                   resultVars <- varsPars
                   symbol "->"
-                  resultExpr <- exprPars
-                  return (ExtLam resultVars (ExtVar 1))
+                  resultExpr <- exprParseTerm
+                  return (ExtLam resultVars (resultExpr))
 
 
 varsPars :: Parser [Int]
@@ -582,12 +632,63 @@ parseVar s = parse varPars s
 parseDigits :: String -> [([Int], String)]
 parseDigits s = parse digitsPars s
 
-parseLam :: String -> [(ExtExpr , String)]
-parseLam s = a
-    where a = parse exprPars s 
-        
+parseLam :: String -> Maybe ExtExpr
+parseLam s = case (parseLam2 s) of
+                    [(n,[])] -> Just n
+                    [(_,out)] -> Nothing
+                    [] -> Nothing
+                    
+
+parseLam2 :: String -> [(ExtExpr , String)]
+parseLam2 s = a
+    where a = parse exprParseTerm s     
+
+    
 parse' :: Parser a -> String -> [(a,String)]
 parse' (P p) inp = p inp 
 
 simplePrint :: String
 simplePrint = "\\"
+
+
+-- 
+
+data ExprCL = AppCL ExprCL ExprCL | K | S | VarCL Int deriving (Show)
+
+
+xFreeIn :: Int -> Expr -> Bool
+xFreeIn x expr = contains x freeVar
+    where freeVar = freeVariables expr
+
+    
+myTranslate :: Expr -> Expr
+--1
+myTranslate (Var int) = Var int
+--2
+myTranslate (App expr1 expr2) = (App (myTranslate expr1) (myTranslate expr2))
+--3
+myTranslate (Lam int expr)
+    | xFreeIn int expr == False = (App (Var (-2)) (myTranslate expr))
+--4
+myTranslate (Lam int (Var int2)) 
+    | int == int2 = (App (App (Var (-1)) (Var (-2))) (Var(-2)))
+--5    
+myTranslate (Lam int (Lam int2 expr))
+    | xFreeIn int expr == True =  (myTranslate (Lam int (myTranslate (Lam int2 expr)))) 
+--6    
+myTranslate (Lam int (App expr1 expr2))
+    | xFreeIn int expr1 == True || xFreeIn int expr2 == True = (App (App (Var (-1)) (myTranslate (Lam int expr1))) (myTranslate (Lam int expr2)))
+    
+
+    
+tranformExpr :: Expr -> ExprCL
+tranformExpr (App expr1 expr2) = (AppCL (tranformExpr expr1) (tranformExpr expr2))
+tranformExpr (Var int) 
+    | int == -1 = S
+    | int == -2 = K
+    | otherwise = (VarCL int)
+
+
+translate :: Expr -> ExprCL
+translate expr = tranformExpr (myTranslate expr)
+
